@@ -89,51 +89,60 @@ function startAutoSend(userId) {
   });
 
   channels.forEach(channel => {
-    const key = userId + '_' + channel;
+    restartChannelTimer(userId, channel);
+  });
+}
 
-    async function sendLoop() {
-      if (!userData[userId] || !userData[userId].autoSend) {
-        clearTimeout(timers[key]);
-        delete timers[key];
-        return;
-      }
-      if (!userData[userId].channels[channel] || !userData[userId].channels[channel].content) {
-        clearTimeout(timers[key]);
-        delete timers[key];
-        return;
-      }
+// 只重启单个频道的定时器
+function restartChannelTimer(userId, channel) {
+  const key = userId + '_' + channel;
 
-      const content = userData[userId].channels[channel].content;
-      const inlineKeyboard = {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '更多精品资源合集', url: 'https://t.me/addlist/xwKEL2hgvv5mYTQ0' }],
-            [{ text: '精品资源搜索群', url: 'https://t.me/hgddhvxx' }]
-          ]
-        }
-      };
+  // 清除旧的定时器
+  if (timers[key]) {
+    clearTimeout(timers[key]);
+    delete timers[key];
+  }
 
-      enqueueSend(channel, IMAGE_URL, { caption: content, ...inlineKeyboard });
-
-      // 优先频道单独间隔 > 用户默认间隔 > 默认5分钟
-      let intervalInMinutes =
-        userData[userId].channels[channel]?.interval ??
-        userData[userId].interval ??
-        DEFAULT_INTERVAL;
-
-      intervalInMinutes = Math.max(intervalInMinutes, 1);
-
-      let delay = intervalInMinutes * 60000;
-      const randomVariation = Math.floor(Math.random() * 11) - 5; // ±5秒
-      delay += randomVariation * 1000;
-      if (delay < 60000) delay = 60000;
-
-      timers[key] = setTimeout(sendLoop, delay);
+  async function sendLoop() {
+    if (!userData[userId] || !userData[userId].autoSend) {
+      clearTimeout(timers[key]);
+      delete timers[key];
+      return;
+    }
+    if (!userData[userId].channels[channel] || !userData[userId].channels[channel].content) {
+      clearTimeout(timers[key]);
+      delete timers[key];
+      return;
     }
 
-    // 不立即调用sendLoop，改为稍微延迟启动，避免重复发送
-    timers[key] = setTimeout(sendLoop, 1000); // 1秒后首次发送
-  });
+    const content = userData[userId].channels[channel].content;
+    const inlineKeyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '更多精品资源合集', url: 'https://t.me/addlist/xwKEL2hgvv5mYTQ0' }],
+          [{ text: '精品资源搜索群', url: 'https://t.me/hgddhvxx' }]
+        ]
+      }
+    };
+
+    enqueueSend(channel, IMAGE_URL, { caption: content, ...inlineKeyboard });
+
+    let intervalInMinutes =
+      userData[userId].channels[channel]?.interval ??
+      userData[userId].interval ??
+      DEFAULT_INTERVAL;
+
+    intervalInMinutes = Math.max(intervalInMinutes, 1);
+
+    let delay = intervalInMinutes * 60000;
+    const randomVariation = Math.floor(Math.random() * 11) - 5; // ±5秒
+    delay += randomVariation * 1000;
+    if (delay < 60000) delay = 60000;
+
+    timers[key] = setTimeout(sendLoop, delay);
+  }
+
+  timers[key] = setTimeout(sendLoop, 1000); // 1秒后首次发送
 }
 
 function stopAutoSend(userId) {
@@ -166,7 +175,7 @@ bot.onText(/\/start/, (msg) => {
     [{ text: '编辑帖子', callback_data: 'edit_post' }],
     [{ text: '自动发送', callback_data: 'auto_send' }],
     [{ text: '停止发送', callback_data: 'stop_send' }],
-    [{ text: '设置频道间隔', callback_data: 'set_channel_interval' }], // 新增设置频道间隔入口
+    [{ text: '设置频道间隔', callback_data: 'set_channel_interval' }],
   ];
   bot.sendMessage(chatId, '请选择操作：', { reply_markup: { inline_keyboard: keyboard } });
 });
@@ -304,7 +313,7 @@ bot.on('callback_query', async (query) => {
 
     bot.sendMessage(chatId, `频道 ${channelName} 的发送间隔已设置为 ${interval} 分钟。`);
     if (userData[userId].autoSend) {
-      startAutoSend(userId); // 重新启动定时器，应用新间隔
+      restartChannelTimer(userId, channelName); // 只重启该频道定时器
     }
   }
 });
