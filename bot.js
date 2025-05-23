@@ -31,23 +31,48 @@ function saveData(data) {
 let userData = loadData();
 let waitingChannel = {};
 
-// 这里改成 polling 模式，不用设置 webHook 选项
+// 初始化bot，开启polling
 const bot = new TelegramBot(TOKEN, { polling: true });
-
-// 删除 webhook 相关代码，直接用 polling，所以不需要 express 的 webhook 处理
-// 下面可以保留 express 用来做其他接口或日志，也可以删掉
 
 const app = express();
 app.use(bodyParser.json());
-
-// 如果不需要额外的 HTTP 接口，可以把 express 相关都去掉
-// 但这里保留启动服务
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
 let timers = {};
 
+// 全局发送队列，控制消息发送频率
+const sendQueue = [];
+let isSending = false;
+
+async function processSendQueue() {
+  if (isSending || sendQueue.length === 0) return;
+  isSending = true;
+
+  while (sendQueue.length > 0) {
+    const { chatId, photoUrl, options } = sendQueue.shift();
+    try {
+      await bot.sendPhoto(chatId, photoUrl, options);
+    } catch (e) {
+      console.error(`发送失败到 ${chatId}:`, e.message);
+      // 失败放回队列末尾，延迟后重试
+      sendQueue.push({ chatId, photoUrl, options });
+      await new Promise(r => setTimeout(r, 5000));
+      continue;
+    }
+    await new Promise(r => setTimeout(r, 1100)); // 控制发送频率，至少1.1秒间隔
+  }
+
+  isSending = false;
+}
+
+function enqueueSend(chatId, photoUrl, options) {
+  sendQueue.push({ chatId, photoUrl, options });
+  processSendQueue();
+}
+
+// 启动自动发送，间隔最低1分钟，支持抖动
 function startAutoSend(userId) {
   if (!userData[userId]) return;
   userData[userId].autoSend = true;
@@ -64,7 +89,6 @@ function startAutoSend(userId) {
         delete timers[key];
         return;
       }
-
       if (!userData[userId].channels[channel] || !userData[userId].channels[channel].content) {
         clearTimeout(timers[key]);
         delete timers[key];
@@ -81,18 +105,14 @@ function startAutoSend(userId) {
         }
       };
 
-      try {
-        await bot.sendPhoto(channel, IMAGE_URL, { caption: content, ...inlineKeyboard });
-      } catch (e) {
-        console.error(`发送失败到频道 ${channel}: ${e.message}`);
-      }
+      enqueueSend(channel, IMAGE_URL, { caption: content, ...inlineKeyboard });
 
-      const intervalInMinutes = userData[userId].interval || 5;
+      // 最小1分钟间隔，默认5分钟
+      const intervalInMinutes = Math.max(userData[userId].interval || 5, 1);
       let delay = intervalInMinutes * 60000;
-
-      const randomVariation = Math.floor(Math.random() * 11) - 5;
+      const randomVariation = Math.floor(Math.random() * 11) - 5; // ±5秒
       delay += randomVariation * 1000;
-      if (delay < 0) delay = 0;
+      if (delay < 60000) delay = 60000;
 
       timers[key] = setTimeout(sendLoop, delay);
     }
@@ -122,8 +142,7 @@ function restoreTimers() {
   }
 }
 
-// 监听命令和消息部分无需变动
-
+// --- Bot命令和交互 ---
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   const keyboard = [
@@ -231,9 +250,13 @@ bot.on('message', (msg) => {
   const chatId = msg.chat.id;
 
   if (waitingChannel[userId] && waitingChannel[userId].mode === 'awaiting_channel') {
-    const channelName = msg.text;
+    const channelName = msg.text.trim();
     if (!userData[userId].channels) {
       userData[userId].channels = {};
+    }
+    if (userData[userId].channels[channelName]) {
+      bot.sendMessage(chatId, `频道 ${channelName} 已经绑定过了，请输入其他频道或者编辑它的帖子内容。`);
+      return;
     }
     userData[userId].channels[channelName] = { content: '' };
     saveData(userData);
@@ -244,10 +267,13 @@ bot.on('message', (msg) => {
   } else if (waitingChannel[userId] && waitingChannel[userId].mode === 'editing_content') {
     const content = msg.text;
     const channelName = waitingChannel[userId].channel;
-    userData[userId].channels[channelName].content = content;
-    saveData(userData);
-
-    bot.sendMessage(chatId, `频道 ${channelName} 的帖子内容已设置！`);
+    if (userData[userId].channels[channelName]) {
+      userData[userId].channels[channelName].content = content;
+      saveData(userData);
+      bot.sendMessage(chatId, `频道 ${channelName} 的帖子内容已设置！`);
+    } else {
+      bot.sendMessage(chatId, `频道 ${channelName} 未绑定，无法设置内容。`);
+    }
     delete waitingChannel[userId];
   }
 });
