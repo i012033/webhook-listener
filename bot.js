@@ -37,7 +37,7 @@ let waitingChannel = {};
 
 const bot = new TelegramBot(TOKEN, {
   webHook: { port: PORT, host: '0.0.0.0' },
-  // request: { proxy: 'http://你的代理地址:端口' } // 如果你需要代理，取消注释
+  // 这里没有代理配置，默认直连
 });
 
 bot.setWebHook(`${WEBHOOK_URL}/bot${TOKEN}`).then(() => {
