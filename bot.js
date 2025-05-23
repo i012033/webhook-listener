@@ -5,7 +5,11 @@ const fs = require('fs');
 const path = require('path');
 
 const TOKEN = '8098473364:AAGiVk1yz4eTzEYQDcQftd3AxUkX2VgOZPs';
-const WEBHOOK_URL = 'https://4c75-82-118-25-84.ngrok-free.app'; // 请替换为你自己的 Webhook URL
+
+// Render 会分配自己的 HTTPS 域名，改成你的 Render 服务地址，
+// 例如：https://your-app.onrender.com
+const WEBHOOK_URL = 'https://webhook-listener-leea.onrender.com';
+
 const PORT = process.env.PORT || 3000;
 const STORAGE_FILE = path.resolve(__dirname, 'storage.json');
 const IMAGE_URL = 'https://i.postimg.cc/QCfW37K7/photo1.jpg';
@@ -29,13 +33,11 @@ function saveData(data) {
 }
 
 let userData = loadData();
-let waitingChannel = {}; // 临时保存正在输入内容的频道
-
-const proxyUrl = 'http://192.168.112.128:10808';  // 请替换为你自己的代理地址（如需要）
+let waitingChannel = {};
 
 const bot = new TelegramBot(TOKEN, {
   webHook: { port: PORT, host: '0.0.0.0' },
-  request: { proxy: proxyUrl }
+  // request: { proxy: 'http://你的代理地址:端口' } // 如果你需要代理，取消注释
 });
 
 bot.setWebHook(`${WEBHOOK_URL}/bot${TOKEN}`).then(() => {
@@ -44,6 +46,7 @@ bot.setWebHook(`${WEBHOOK_URL}/bot${TOKEN}`).then(() => {
 
 const app = express();
 app.use(bodyParser.json());
+
 app.post(`/bot${TOKEN}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
@@ -51,7 +54,6 @@ app.post(`/bot${TOKEN}`, (req, res) => {
 
 let timers = {};
 
-// 开始自动发送，每个频道单独定时
 function startAutoSend(userId) {
   if (!userData[userId]) return;
   userData[userId].autoSend = true;
@@ -91,22 +93,20 @@ function startAutoSend(userId) {
         console.error(`发送失败到频道 ${channel}: ${e.message}`);
       }
 
-      const intervalInMinutes = userData[userId].interval || 5;  // 默认5分钟
-      let delay = intervalInMinutes * 60000; // 基础延迟时间，单位毫秒
+      const intervalInMinutes = userData[userId].interval || 5;
+      let delay = intervalInMinutes * 60000;
 
-      const randomVariation = Math.floor(Math.random() * 11) - 5;  // 随机值在-5到+5秒之间
-      delay += randomVariation * 1000;  // 添加随机波动的延迟
-
+      const randomVariation = Math.floor(Math.random() * 11) - 5;
+      delay += randomVariation * 1000;
       if (delay < 0) delay = 0;
 
-      timers[key] = setTimeout(sendLoop, delay);  // 设置下一次发送的时间
+      timers[key] = setTimeout(sendLoop, delay);
     }
 
     sendLoop();
   });
 }
 
-// 停止自动发送，清理所有用户定时器
 function stopAutoSend(userId) {
   if (!userData[userId]) return;
   userData[userId].autoSend = false;
@@ -158,9 +158,7 @@ bot.on('callback_query', async (query) => {
     } else {
       const buttons = channels.map(ch => ([{ text: ch, callback_data: `del_${ch}` }]));
       await bot.sendMessage(chatId, '请选择要删除的频道：', {
-        reply_markup: {
-          inline_keyboard: buttons
-        }
+        reply_markup: { inline_keyboard: buttons }
       });
     }
 
@@ -188,9 +186,7 @@ bot.on('callback_query', async (query) => {
     }
     const buttons = channels.map(ch => ([{ text: ch, callback_data: `edit_${ch}` }]));
     await bot.sendMessage(chatId, '请选择要编辑的频道：', {
-      reply_markup: {
-        inline_keyboard: buttons
-      }
+      reply_markup: { inline_keyboard: buttons }
     });
 
   } else if (data.startsWith('edit_')) {
@@ -243,7 +239,7 @@ bot.on('message', (msg) => {
     if (!userData[userId].channels) {
       userData[userId].channels = {};
     }
-    userData[userId].channels[channelName] = { content: '' };  // 初始化绑定频道的内容为空
+    userData[userId].channels[channelName] = { content: '' };
     saveData(userData);
 
     bot.sendMessage(chatId, `频道 ${channelName} 已绑定！现在请输入该频道的帖子内容：`);
@@ -256,8 +252,12 @@ bot.on('message', (msg) => {
     saveData(userData);
 
     bot.sendMessage(chatId, `频道 ${channelName} 的帖子内容已设置！`);
-    delete waitingChannel[userId];  // 清除等待状态
+    delete waitingChannel[userId];
   }
 });
 
-restoreTimers();  // 启动时恢复定时器
+restoreTimers();
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
