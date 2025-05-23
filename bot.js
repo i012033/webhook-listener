@@ -142,7 +142,7 @@ function restartChannelTimer(userId, channel) {
     timers[key] = setTimeout(sendLoop, delay);
   }
 
-  timers[key] = setTimeout(sendLoop, 1000); // 1秒后首次发送
+  timers[key] = setTimeout(sendLoop, 5000); // 1秒后首次发送
 }
 
 function stopAutoSend(userId) {
