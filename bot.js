@@ -10,6 +10,8 @@ const PORT = process.env.PORT || 3000;
 const STORAGE_FILE = path.resolve(__dirname, 'storage.json');
 const IMAGE_URL = 'https://i.postimg.cc/QCfW37K7/photo1.jpg';
 
+const DEFAULT_INTERVAL = 5; // 默认5分钟
+
 function loadData() {
   if (!fs.existsSync(STORAGE_FILE)) return {};
   try {
@@ -55,11 +57,8 @@ async function processSendQueue() {
     try {
       await bot.sendPhoto(chatId, photoUrl, options);
     } catch (e) {
-      console.error(`发送失败到 ${chatId}:`, e.message);
-      // 失败放回队列末尾，延迟后重试
-      sendQueue.push({ chatId, photoUrl, options });
-      await new Promise(r => setTimeout(r, 5000));
-      continue;
+      console.error(`发送失败到 ${chatId}，任务已丢弃:`, e.message);
+      continue; // 不再重试，直接跳过
     }
     await new Promise(r => setTimeout(r, 1100)); // 控制发送频率，至少1.1秒间隔
   }
@@ -72,16 +71,25 @@ function enqueueSend(chatId, photoUrl, options) {
   processSendQueue();
 }
 
-// 启动自动发送，间隔最低1分钟，支持抖动
+// 启动自动发送，支持频道单独设置发送间隔，默认5分钟
 function startAutoSend(userId) {
   if (!userData[userId]) return;
   userData[userId].autoSend = true;
   saveData(userData);
 
   const channels = Object.keys(userData[userId].channels);
+
+  // 清理所有该用户之前的频道定时器，防止重复
   channels.forEach(channel => {
     const key = userId + '_' + channel;
-    if (timers[key]) clearTimeout(timers[key]);
+    if (timers[key]) {
+      clearTimeout(timers[key]);
+      delete timers[key];
+    }
+  });
+
+  channels.forEach(channel => {
+    const key = userId + '_' + channel;
 
     async function sendLoop() {
       if (!userData[userId] || !userData[userId].autoSend) {
@@ -107,8 +115,14 @@ function startAutoSend(userId) {
 
       enqueueSend(channel, IMAGE_URL, { caption: content, ...inlineKeyboard });
 
-      // 最小1分钟间隔，默认5分钟
-      const intervalInMinutes = Math.max(userData[userId].interval || 5, 1);
+      // 优先频道单独间隔 > 用户默认间隔 > 默认5分钟
+      let intervalInMinutes =
+        userData[userId].channels[channel]?.interval ??
+        userData[userId].interval ??
+        DEFAULT_INTERVAL;
+
+      intervalInMinutes = Math.max(intervalInMinutes, 1);
+
       let delay = intervalInMinutes * 60000;
       const randomVariation = Math.floor(Math.random() * 11) - 5; // ±5秒
       delay += randomVariation * 1000;
@@ -117,7 +131,8 @@ function startAutoSend(userId) {
       timers[key] = setTimeout(sendLoop, delay);
     }
 
-    sendLoop();
+    // 不立即调用sendLoop，改为稍微延迟启动，避免重复发送
+    timers[key] = setTimeout(sendLoop, 1000); // 1秒后首次发送
   });
 }
 
@@ -151,6 +166,7 @@ bot.onText(/\/start/, (msg) => {
     [{ text: '编辑帖子', callback_data: 'edit_post' }],
     [{ text: '自动发送', callback_data: 'auto_send' }],
     [{ text: '停止发送', callback_data: 'stop_send' }],
+    [{ text: '设置频道间隔', callback_data: 'set_channel_interval' }], // 新增设置频道间隔入口
   ];
   bot.sendMessage(chatId, '请选择操作：', { reply_markup: { inline_keyboard: keyboard } });
 });
@@ -160,7 +176,7 @@ bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
 
-  if (!userData[userId]) userData[userId] = { channels: {}, autoSend: false, interval: 5 };
+  if (!userData[userId]) userData[userId] = { channels: {}, autoSend: false, interval: DEFAULT_INTERVAL };
 
   if (data === 'bind_channel') {
     bot.sendMessage(chatId, '请输入频道用户名（如 @xxx）：');
@@ -242,6 +258,54 @@ bot.on('callback_query', async (query) => {
   } else if (data === 'stop_send') {
     stopAutoSend(userId);
     bot.sendMessage(chatId, '自动发送已停止。');
+
+  } else if (data === 'set_channel_interval') {
+    const channels = Object.keys(userData[userId].channels);
+    if (channels.length === 0) {
+      bot.sendMessage(chatId, '你还未绑定任何频道。');
+      return;
+    }
+    const buttons = channels.map(ch => ([{ text: ch, callback_data: `set_int_channel_${ch}` }]));
+    bot.sendMessage(chatId, '请选择要设置间隔的频道：', {
+      reply_markup: { inline_keyboard: buttons }
+    });
+
+  } else if (data.startsWith('set_int_channel_')) {
+    const channelToSet = data.slice('set_int_channel_'.length);
+    if (!userData[userId].channels[channelToSet]) {
+      bot.sendMessage(chatId, '频道不存在。');
+      return;
+    }
+    bot.sendMessage(chatId, `请选择频道 ${channelToSet} 的发送间隔（1-5分钟）：`, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '1分钟', callback_data: `set_channel_interval_value_${channelToSet}_1` }],
+          [{ text: '2分钟', callback_data: `set_channel_interval_value_${channelToSet}_2` }],
+          [{ text: '3分钟', callback_data: `set_channel_interval_value_${channelToSet}_3` }],
+          [{ text: '4分钟', callback_data: `set_channel_interval_value_${channelToSet}_4` }],
+          [{ text: '5分钟', callback_data: `set_channel_interval_value_${channelToSet}_5` }],
+        ]
+      }
+    });
+
+  } else if (data.startsWith('set_channel_interval_value_')) {
+    // 格式: set_channel_interval_value_<channel>_<interval>
+    const parts = data.split('_');
+    const channelName = parts.slice(4, parts.length - 1).join('_'); // 防止频道名带下划线
+    const interval = parseInt(parts[parts.length - 1], 10);
+
+    if (!userData[userId].channels[channelName]) {
+      bot.sendMessage(chatId, '频道不存在。');
+      return;
+    }
+
+    userData[userId].channels[channelName].interval = interval;
+    saveData(userData);
+
+    bot.sendMessage(chatId, `频道 ${channelName} 的发送间隔已设置为 ${interval} 分钟。`);
+    if (userData[userId].autoSend) {
+      startAutoSend(userId); // 重新启动定时器，应用新间隔
+    }
   }
 });
 
@@ -258,7 +322,7 @@ bot.on('message', (msg) => {
       bot.sendMessage(chatId, `频道 ${channelName} 已经绑定过了，请输入其他频道或者编辑它的帖子内容。`);
       return;
     }
-    userData[userId].channels[channelName] = { content: '' };
+    userData[userId].channels[channelName] = { content: '', interval: DEFAULT_INTERVAL };
     saveData(userData);
 
     bot.sendMessage(chatId, `频道 ${channelName} 已绑定！现在请输入该频道的帖子内容：`);
