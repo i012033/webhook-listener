@@ -66,23 +66,21 @@ function enqueueSend(chatId, photoUrl, options) {
   processSendQueue();
 }
 
-function startAutoSend(userId) {
+function startAutoSend(userId, specificChannel) {
   if (!userData[userId]) return;
+
   userData[userId].autoSend = true;
   saveData(userData);
 
   const channels = Object.keys(userData[userId].channels);
 
-  channels.forEach(channel => {
-    const key = userId + '_' + channel;
+  if (specificChannel) {
+    // 只重启指定频道
+    const key = userId + '_' + specificChannel;
     if (timers[key]) {
       clearTimeout(timers[key]);
       delete timers[key];
     }
-  });
-
-  channels.forEach(channel => {
-    const key = userId + '_' + channel;
 
     async function sendLoop() {
       if (!userData[userId] || !userData[userId].autoSend) {
@@ -90,13 +88,13 @@ function startAutoSend(userId) {
         delete timers[key];
         return;
       }
-      if (!userData[userId].channels[channel] || !userData[userId].channels[channel].content) {
+      if (!userData[userId].channels[specificChannel] || !userData[userId].channels[specificChannel].content) {
         clearTimeout(timers[key]);
         delete timers[key];
         return;
       }
 
-      const content = userData[userId].channels[channel].content;
+      const content = userData[userId].channels[specificChannel].content;
       const inlineKeyboard = {
         reply_markup: {
           inline_keyboard: [
@@ -106,10 +104,10 @@ function startAutoSend(userId) {
         }
       };
 
-      enqueueSend(channel, IMAGE_URL, { caption: content, ...inlineKeyboard });
+      enqueueSend(specificChannel, IMAGE_URL, { caption: content, ...inlineKeyboard });
 
       let intervalInMinutes =
-        userData[userId].channels[channel]?.interval ??
+        userData[userId].channels[specificChannel]?.interval ??
         userData[userId].interval ??
         DEFAULT_INTERVAL;
 
@@ -124,7 +122,62 @@ function startAutoSend(userId) {
     }
 
     timers[key] = setTimeout(sendLoop, 5000);
-  });
+
+  } else {
+    // 全部重启所有频道
+    channels.forEach(channel => {
+      const key = userId + '_' + channel;
+      if (timers[key]) {
+        clearTimeout(timers[key]);
+        delete timers[key];
+      }
+    });
+
+    channels.forEach(channel => {
+      const key = userId + '_' + channel;
+
+      async function sendLoop() {
+        if (!userData[userId] || !userData[userId].autoSend) {
+          clearTimeout(timers[key]);
+          delete timers[key];
+          return;
+        }
+        if (!userData[userId].channels[channel] || !userData[userId].channels[channel].content) {
+          clearTimeout(timers[key]);
+          delete timers[key];
+          return;
+        }
+
+        const content = userData[userId].channels[channel].content;
+        const inlineKeyboard = {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '更多精品资源合集', url: 'https://t.me/addlist/xwKEL2hgvv5mYTQ0' }],
+              [{ text: '精品资源搜索群', url: 'https://t.me/hgddhvxx' }]
+            ]
+          }
+        };
+
+        enqueueSend(channel, IMAGE_URL, { caption: content, ...inlineKeyboard });
+
+        let intervalInMinutes =
+          userData[userId].channels[channel]?.interval ??
+          userData[userId].interval ??
+          DEFAULT_INTERVAL;
+
+        intervalInMinutes = Math.max(intervalInMinutes, 1);
+
+        let delay = intervalInMinutes * 60000;
+        const randomVariation = Math.floor(Math.random() * 11) - 5; // ±5秒
+        delay += randomVariation * 1000;
+        if (delay < 60000) delay = 60000;
+
+        timers[key] = setTimeout(sendLoop, delay);
+      }
+
+      timers[key] = setTimeout(sendLoop, 5000);
+    });
+  }
 }
 
 function stopAutoSend(userId) {
@@ -296,12 +349,13 @@ function setupBot() {
         return;
       }
 
-      userData[userId].channels[channelName].interval = interval;
-      saveData(userData);
+  userData[userId].channels[channelName].interval = interval;
+  saveData(userData);
 
-      bot.sendMessage(chatId, `频道 ${channelName} 的发送间隔已设置为 ${interval} 分钟。`);
-      if (userData[userId].autoSend) startAutoSend(userId);
-    }
+  bot.sendMessage(chatId, `频道 ${channelName} 的发送间隔已设置为 ${interval} 分钟。`);
+
+  if (userData[userId].autoSend) startAutoSend(userId, channelName);  // 只重启这个频道
+}
     bot.answerCallbackQuery(query.id);
   });
 
