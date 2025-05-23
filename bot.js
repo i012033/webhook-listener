@@ -1,14 +1,10 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const TelegramBot = require('node-telegram-bot-api');
+const TelegramBot = require('node-telegram-bot-api'); 
 const fs = require('fs');
 const path = require('path');
 
 const TOKEN = '8098473364:AAGiVk1yz4eTzEYQDcQftd3AxUkX2VgOZPs';
-
-// Render 会分配自己的 HTTPS 域名，改成你的 Render 服务地址，
-// 例如：https://your-app.onrender.com
-const WEBHOOK_URL = 'https://webhook-listener-leea.onrender.com';
 
 const PORT = process.env.PORT || 3000;
 const STORAGE_FILE = path.resolve(__dirname, 'storage.json');
@@ -35,21 +31,19 @@ function saveData(data) {
 let userData = loadData();
 let waitingChannel = {};
 
-const bot = new TelegramBot(TOKEN, {
-  webHook: { port: PORT, host: '0.0.0.0' },
-  // 这里没有代理配置，默认直连
-});
+// 这里改成 polling 模式，不用设置 webHook 选项
+const bot = new TelegramBot(TOKEN, { polling: true });
 
-bot.setWebHook(`${WEBHOOK_URL}/bot${TOKEN}`).then(() => {
-  console.log('Webhook 设置成功');
-}).catch(console.error);
+// 删除 webhook 相关代码，直接用 polling，所以不需要 express 的 webhook 处理
+// 下面可以保留 express 用来做其他接口或日志，也可以删掉
 
 const app = express();
 app.use(bodyParser.json());
 
-app.post(`/bot${TOKEN}`, (req, res) => {
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
+// 如果不需要额外的 HTTP 接口，可以把 express 相关都去掉
+// 但这里保留启动服务
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
 
 let timers = {};
@@ -127,6 +121,8 @@ function restoreTimers() {
     if (userData[userId].autoSend) startAutoSend(userId);
   }
 }
+
+// 监听命令和消息部分无需变动
 
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
@@ -257,7 +253,3 @@ bot.on('message', (msg) => {
 });
 
 restoreTimers();
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
