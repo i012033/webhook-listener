@@ -43,17 +43,6 @@ app.listen(PORT, () => {
 
 let bot;
 
-// 清理旧的更新队列，避免409冲突
-async function clearOldUpdates() {
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${TOKEN}/getUpdates?offset=-1`);
-    const json = await res.json();
-    if (json.ok) console.log('旧更新已清理');
-  } catch (e) {
-    console.error('清理旧更新失败:', e);
-  }
-}
-
 async function processSendQueue() {
   if (isSending || sendQueue.length === 0) return;
   isSending = true;
@@ -64,9 +53,9 @@ async function processSendQueue() {
       await bot.sendPhoto(chatId, photoUrl, options);
     } catch (e) {
       console.error(`发送失败到 ${chatId}，任务已丢弃:`, e.message);
-      continue; // 不再重试，直接跳过
+      continue;
     }
-    await new Promise(r => setTimeout(r, 5000)); // 控制发送频率，至少1.1秒间隔
+    await new Promise(r => setTimeout(r, 5000));
   }
 
   isSending = false;
@@ -84,7 +73,6 @@ function startAutoSend(userId) {
 
   const channels = Object.keys(userData[userId].channels);
 
-  // 清理所有该用户之前的频道定时器，防止重复
   channels.forEach(channel => {
     const key = userId + '_' + channel;
     if (timers[key]) {
@@ -120,7 +108,6 @@ function startAutoSend(userId) {
 
       enqueueSend(channel, IMAGE_URL, { caption: content, ...inlineKeyboard });
 
-      // 优先频道单独间隔 > 用户默认间隔 > 默认5分钟
       let intervalInMinutes =
         userData[userId].channels[channel]?.interval ??
         userData[userId].interval ??
@@ -136,7 +123,7 @@ function startAutoSend(userId) {
       timers[key] = setTimeout(sendLoop, delay);
     }
 
-    timers[key] = setTimeout(sendLoop, 5000); // 1秒后首次发送
+    timers[key] = setTimeout(sendLoop, 5000);
   });
 }
 
@@ -164,21 +151,9 @@ function restoreTimers() {
 function setupBot() {
   bot = new TelegramBot(TOKEN, { polling: true });
 
-  bot.on('polling_error', async (error) => {
+  bot.on('polling_error', (error) => {
     console.error('Polling error:', error.code, error.message);
-
-    if (error.code === 'ETELEGRAM' && error.message.includes('409')) {
-      console.log('检测到409冲突，尝试清理旧轮询并重启...');
-      try {
-        await bot.stopPolling();
-      } catch (e) {
-        console.error('停止轮询失败:', e);
-      }
-      await clearOldUpdates();
-      setTimeout(() => {
-        setupBot();
-      }, 2000);
-    }
+    // 删除409冲突处理
   });
 
   bot.onText(/\/start/, (msg) => {
@@ -312,9 +287,8 @@ function setupBot() {
       });
 
     } else if (data.startsWith('set_channel_interval_value_')) {
-      // 格式: set_channel_interval_value_<channel>_<interval>
       const parts = data.split('_');
-      const channelName = parts.slice(4, parts.length - 1).join('_'); // 防止频道名带下划线
+      const channelName = parts.slice(4, parts.length - 1).join('_');
       const interval = parseInt(parts[parts.length - 1], 10);
 
       if (!userData[userId].channels[channelName]) {
@@ -326,7 +300,6 @@ function setupBot() {
       saveData(userData);
 
       bot.sendMessage(chatId, `频道 ${channelName} 的发送间隔已设置为 ${interval} 分钟。`);
-      // 重启该频道的定时发送
       if (userData[userId].autoSend) startAutoSend(userId);
     }
     bot.answerCallbackQuery(query.id);
@@ -368,9 +341,4 @@ function setupBot() {
   restoreTimers();
 }
 
-async function main() {
-  await clearOldUpdates();
-  setupBot();
-}
-
-main();
+setupBot();
