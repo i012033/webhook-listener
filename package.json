@@ -1,0 +1,22 @@
+{
+  "name": "tg-auto-post-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.9.0",
+    "body-parser": "^2.2.0",
+    "express": "^5.1.0",
+    "https-proxy-agent": "^5.0.1",
+    "node-schedule": "^2.1.1",
+    "node-telegram-bot-api": "^0.66.0",
+    "socks-proxy-agent": "^8.0.5",
+    "telegraf": "^4.16.3"
+  },
+  "description": ""
+}
